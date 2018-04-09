@@ -4,4 +4,4 @@ This is the [ImGui.NET](https://github.com/mellinoe/ImGui.NET) sample program, b
 just to check the functionality of LightDx library.
 
 # Screenshots
-![Screenshot](Screenshots/1.PNG)
+![Screenshot](Screenshots/1.png)
