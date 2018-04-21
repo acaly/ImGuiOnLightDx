@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.Linq;
+using System.Numerics;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -16,14 +17,20 @@ namespace ImGuiOnLightDx
 {
     internal unsafe class SampleWindow
     {
-        public struct Vertex
+        private struct Vertex
         {
             [Position]
-            public Float2 Position;
+            public Vector2 Position;
             [TexCoord]
-            public Float2 TexCoord;
+            public Vector2 TexCoord;
             [Color]
             public uint Color;
+        }
+
+        private struct VSConstant
+        {
+            public float Width;
+            public float Height;
         }
 
         public SampleWindow()
@@ -40,8 +47,9 @@ namespace ImGuiOnLightDx
 
         private LightDevice _device;
         private Form _form;
-        private InputDataProcessor<Vertex> _inputDataProcessor;
-        private InputBuffer _vertexBuffer;
+        private Pipeline _pipeline;
+        private VertexDataProcessor<Vertex> _inputDataProcessor;
+        private VertexBuffer _vertexBuffer;
         private Vertex[] _vertexBufferData;
         private IndexBuffer _indexBuffer;
         private ushort[] _indexBufferData;
@@ -67,7 +75,7 @@ namespace ImGuiOnLightDx
                     Marshal.SizeOf<Vertex>() * _vertexBufferData.Length,
                     Marshal.SizeOf<Vertex>() * num);
             }
-            _inputDataProcessor.UpdateBufferDynamic(_vertexBuffer, _vertexBufferData);
+            _vertexBuffer.Update(_vertexBufferData);
         }
 
         private void UpdateIB(int num, ushort* data)
@@ -76,7 +84,7 @@ namespace ImGuiOnLightDx
             {
                 _indexBufferData = new ushort[num + 200];
                 if (_indexBuffer != null) _indexBuffer.Dispose();
-                _indexBuffer = _device.CreateDynamicIndexBuffer(16, _indexBufferData.Length);
+                _indexBuffer = _pipeline.CreateDynamicIndexBuffer(16, _indexBufferData.Length);
             }
             fixed (ushort* dest = _indexBufferData)
             {
@@ -143,7 +151,7 @@ namespace ImGuiOnLightDx
 
             ImGui.GetStyle().WindowRounding = 0;
 
-            ImGui.SetNextWindowSize(new System.Numerics.Vector2(800, 600 - 20), Condition.Always);
+            ImGui.SetNextWindowSize(ImGui.GetIO().DisplaySize - new Vector2(0, 20), Condition.Always);
             ImGui.SetNextWindowPos(ImGui.GetIO().DisplaySize, Condition.Always, new System.Numerics.Vector2(1f));
             ImGui.BeginWindow("ImGUI.NET Sample Program", ref mainWindowOpened, WindowFlags.NoResize | WindowFlags.NoTitleBar | WindowFlags.NoMove);
 
@@ -280,7 +288,7 @@ namespace ImGuiOnLightDx
         private void RenderFrame()
         {
             IO io = ImGui.GetIO();
-            io.DisplaySize = new System.Numerics.Vector2(800, 600);
+            io.DisplaySize = new System.Numerics.Vector2(_device.ScreenWidth, _device.ScreenHeight);
             io.DisplayFramebufferScale = new System.Numerics.Vector2(1);
             io.DeltaTime = (1f / 60f);
 
@@ -347,8 +355,6 @@ namespace ImGuiOnLightDx
                 _form = form;
                 form.Text = "ImGui.NET on LightDx";
                 form.ClientSize = new Size(800, 600);
-                form.FormBorderStyle = FormBorderStyle.Fixed3D;
-                form.MaximizeBox = false;
                 form.KeyDown += OnKeyDown;
                 form.KeyUp += OnKeyUp;
 
@@ -356,27 +362,38 @@ namespace ImGuiOnLightDx
                 {
                     _device = device;
 
-                    var target = device.CreateDefaultTarget(false);
+                    var target = new RenderTarget(device.GetDefaultTarget());
                     target.Apply();
 
-                    Pipeline pipeline;
-                    using (var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("ImGuiOnLightDx.Shader.fx"))
-                    {
-                        pipeline = device.CompilePipeline(ShaderSource.FromStream(stream), false, InputTopology.Triangle);
-                    }
+                    Pipeline pipeline = device.CompilePipeline(InputTopology.Triangle,
+                        ShaderSource.FromResource("Shader.fx", ShaderType.Vertex | ShaderType.Pixel)); ;
+                    _pipeline = pipeline;
                     
                     pipeline.SetResource(0, CreateFontTexture());
                     pipeline.SetBlender(Blender.AlphaBlender);
 
                     pipeline.Apply();
 
-                    var input = pipeline.CreateInputDataProcessor<Vertex>();
+                    var input = pipeline.CreateVertexDataProcessor<Vertex>();
                     _inputDataProcessor = input;
+
+                    var constant = pipeline.CreateConstantBuffer<VSConstant>();
+                    pipeline.SetConstant(ShaderType.Vertex, 0, constant);
+
+                    void UpdateWindowSize()
+                    {
+                        constant.Value.Width = device.ScreenWidth;
+                        constant.Value.Height = device.ScreenHeight;
+                        constant.Update();
+                    }
+
+                    device.ResolutionChanged += (sender, e) => UpdateWindowSize();
+                    UpdateWindowSize();
 
                     form.Show();
                     device.RunLoop(delegate ()
                     {
-                        target.ClearAll(Color.White);
+                        target.ClearAll();
 
                         RenderFrame();
 
